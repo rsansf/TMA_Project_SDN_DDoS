@@ -1,5 +1,5 @@
 # TMA_Project_SDN_DDoS
-TMA project carried out by Murad Al-Smady, Gulzar Hacizade, Roger Sans Falip, Luca Stroppa, and Arnold Veltmann. The aim of this project is to provide a solution against DDoS attacks in an SDN environment.
+TMA project carried out by Murad Al-Smady, Gulzar Hacizade, Roger Sans Falip, Luca Stroppa, and Arnold Veltmann. This project aims to provide a solution against DDoS attacks in an SDN environment.
 
 
 HOW TO RUN IT:

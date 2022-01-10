@@ -127,10 +127,20 @@ class controller(app_manager.RyuApp):
 
         datapath.send_msg(out)
 
+    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
+    def _state_change_handler(self, ev):
+        current_datapath = ev.datapath
+        if ev.state == MAIN_DISPATCHER and current_datapath.id not in self._datapaths:
+            self.logger.debug('Register datapath: %016x', current_datapath.id)
+            self._datapaths[current_datapath.id] = current_datapath
+        elif ev.state == DEAD_DISPATCHER and current_datapath.id in self._datapaths:
+            self.logger.debug('Unregister datapath: %016x', current_datapath.id)
+            del self._datapaths[current_datapath.id]
+
     def _start_monitor(self):
         while True:
             for datapath in self._datapaths.values():
-                self._request_statistics_first(datapath)
+                self._request_statistics(datapath)
             hub.sleep(3)
 
     def _request_statistics(self, datapath):

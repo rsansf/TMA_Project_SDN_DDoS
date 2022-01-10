@@ -5,7 +5,7 @@ TMA project carried out by Murad Al-Smady, Gulzar Hacizade, Roger Sans Falip, Lu
 HOW TO RUN IT:
 1. sudo apt-get install mininet
 2. sudo apt-get install python2 python3 python3-pip
-3. pip install eventlet==0.30.2
+3. pip install eventlet==0.30.2 //step done to prevent errors from ryu and mininet
 4. pip3 install ryu
 5. sudo mn -c //to erase cache stored stuff from mininet
 6. ryu-manager controller.py //to start the controller

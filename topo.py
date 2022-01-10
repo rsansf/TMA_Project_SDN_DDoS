@@ -1,14 +1,14 @@
 #!/usr/bin/python
 from time import sleep
 
-from mininet.link import TCLink
-from mininet.log import setLogLevel
-from mininet.net import Mininet
-from mininet.node import RemoteController
 from mininet.topo import Topo
+from mininet.net import Mininet, Host
+from mininet.log import setLogLevel
+from mininet.cli import CLI
+from mininet.node import OVSSwitch, Controller, RemoteController
+from mininet.link import TCLink
 
 TEST_TIME = 300  # seconds
-
 
 class DDoSTopology(Topo):
     def build(self):

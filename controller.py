@@ -11,6 +11,7 @@ from ryu.lib.packet import ether_types
 from ryu.lib.packet import ipv4
 from ryu.ofproto import ofproto_v1_3
 
+
 class controller(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -20,13 +21,12 @@ class controller(app_manager.RyuApp):
         self._mac_to_port = {}
         self._datapaths = {}
         self._banned_ips = []
-        self._spawn_threads()
 
-        # initializing the arrays for storing packet count of flows
+        self._spawn_thread()
         self._request = [0] * 20
         self._diff = [0] * 20
 
-    def _spawn_threads(self):
+    def _spawn_thread(self):
         hub.spawn(self._start_monitor)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -43,7 +43,6 @@ class controller(app_manager.RyuApp):
         parser = datapath.ofproto_parser
 
         instructions = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-
         if buffer_id:
             mod = parser.OFPFlowMod(
                 datapath=datapath,
@@ -59,12 +58,11 @@ class controller(app_manager.RyuApp):
                 match=match,
                 instructions=instructions,
             )
+
         datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        # If you hit this you might want to increase the
-        # "miss_send_length" of your switch
         if ev.msg.msg_len < ev.msg.total_len:
             self.logger.debug('Packet truncated: only %s of %s bytes', ev.msg.msg_len, ev.msg.total_len)
 
@@ -77,7 +75,6 @@ class controller(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
-        # ignore lldp packet
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
 
@@ -87,7 +84,6 @@ class controller(app_manager.RyuApp):
         dpid = datapath.id
         self._mac_to_port.setdefault(dpid, {})
 
-        # learn a mac address to avoid FLOOD next time
         self._mac_to_port[dpid][src] = in_port
 
         if dst in self._mac_to_port[dpid]:
@@ -97,30 +93,26 @@ class controller(app_manager.RyuApp):
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        # install a flow to avoid packet_in next time
-        if out_port != ofproto.OFPP_FLOOD:
+        if out_port != ofproto.OFPP_FLOOD and eth.ethertype == ether_types.ETH_TYPE_IP:
+            ip = pkt.get_protocol(ipv4.ipv4)
+            srcip = ip.src
+            dstip = ip.dst
 
-            # check IP Protocol and create a match for IP
-            if eth.ethertype == ether_types.ETH_TYPE_IP:
-                ip = pkt.get_protocol(ipv4.ipv4)
-                srcip = ip.src
-                dstip = ip.dst
+            match = parser.OFPMatch(
+                in_port=in_port,
+                eth_dst=dst,
+                eth_src=src,
+                eth_type=ether_types.ETH_TYPE_IP,
+                ipv4_src=srcip,
+                ipv4_dst=dstip
+            )
 
-                match = parser.OFPMatch(
-                    in_port=in_port,
-                    eth_dst=dst,
-                    eth_src=src,
-                    eth_type=ether_types.ETH_TYPE_IP,
-                    ipv4_src=srcip,
-                    ipv4_dst=dstip
-                )
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                self._add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+            else:
+                self._add_flow(datapath, 1, match, actions)
 
-                # flow_mod & packet_out
-                if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                    self._add_flow(datapath, 1, match, actions, msg.buffer_id)
-                    return
-                else:
-                    self._add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -135,10 +127,20 @@ class controller(app_manager.RyuApp):
 
         datapath.send_msg(out)
 
+    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
+    def _state_change_handler(self, ev):
+        current_datapath = ev.datapath
+        if ev.state == MAIN_DISPATCHER and current_datapath.id not in self._datapaths:
+            self.logger.debug('Register datapath: %016x', current_datapath.id)
+            self._datapaths[current_datapath.id] = current_datapath
+        elif ev.state == DEAD_DISPATCHER and current_datapath.id in self._datapaths:
+            self.logger.debug('Unregister datapath: %016x', current_datapath.id)
+            del self._datapaths[current_datapath.id]
+
     def _start_monitor(self):
         while True:
             for datapath in self._datapaths.values():
-                self._request_statistics_first(datapath)
+                self._request_statistics(datapath)
             hub.sleep(3)
 
     def _request_statistics(self, datapath):
@@ -150,11 +152,12 @@ class controller(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
-        body = ev.msg.body
         self.logger.info('\n\n\n+--------------------+--------------+---------------------+-----------+')
         self.logger.info('|  ethernet address  |  ip address  |  number of packets  |  Blocked  |')
         self.logger.info('+--------------------+--------------+---------------------+-----------+')
+
         value = 0
+        body = ev.msg.body
         for stat in sorted(
                 [flow for flow in body if flow.priority == 1], key=lambda flow: (
                         flow.match['in_port'],
@@ -163,11 +166,11 @@ class controller(app_manager.RyuApp):
                         flow.match['ipv4_dst'],
                     )
                 ):
-            blocked = 'NO'
-            if stat.match['ipv4_src'] != self._server_ip and stat != None:
-                if stat.match['ipv4_src'] in self._banned_ips: blocked = 'YES'
-                # here we have to store values of packet counts of flows for 2 consecutive requests
+
+            if stat.match['ipv4_src'] != self._server_ip and stat is not None:
                 value += 1
+
+                blocked = 'YES' if stat.match['ipv4_src'] in self._banned_ips else 'NO'
                 self._diff[value] = (stat.packet_count - self._request[value])
                 self._request[value] = stat.packet_count
                 self.logger.info(
@@ -177,12 +180,13 @@ class controller(app_manager.RyuApp):
                     self._request[value]+1,
                     blocked,
                 )
-                # here we are checking packet rate, and, if it is exceeding 25 packets/s, we are dropping the packets by adding flow rule
+
                 calc = self._diff[value] / 3
                 if calc > 40 and stat.match['ipv4_src'] not in self._banned_ips:
                     print('DDoS ATTACK DETECTED!')
                     print('Dropping packets coming from the following IP:')
                     print(stat.match['ipv4_src'])
+
                     self._banned_ips.append(stat.match['ipv4_src'])
                     msg = ev.msg
                     datapath = msg.datapath

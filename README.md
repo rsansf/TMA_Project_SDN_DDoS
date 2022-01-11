@@ -1,6 +1,7 @@
 # TMA_Project_SDN_DDoS
 TMA project carried out by Murad Al-Smady, Gulzar Hacizade, Roger Sans Falip, Luca Stroppa, and Arnold Veltmann. This project aims to provide a solution against DDoS attacks in an SDN environment.
 
+The main code is written in `controller.py` for the ryu controller and the topology is covered in `topo.py`.
 
 ### Instructions on how to run
 
